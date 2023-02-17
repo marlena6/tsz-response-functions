@@ -18,12 +18,13 @@ print("Threads: ", Threads.nthreads(), "\n")
 shape, wcs = fullsky_geometry(0.5 * Pixell.arcminute)
 
 ##
-fid = h5open("/mnt/raid-cita/mlokken/buzzard/catalogs/halos/buzzard_halos.hdf5", "r")
+fid = h5open("/mnt/raid-cita/mlokken/buzzard/catalogs/halos/buzzard_halos_zgtrpt03.hdf5", "r")
 # fid = h5open("/mnt/scratch-lustre/mlokken/pkpatch/halos_hdf5.h5", "r")
 ra, dec = deg2rad.(fid["ra"]), deg2rad.(fid["dec"])
 redshift = collect(fid["z"])
 halo_mass = collect(fid["m200c"])
-
+# choose the cutoff for the pressure profiles here
+cutoff = 4
 ##
 perm = sortperm(dec, alg=ThreadsX.MergeSort)
 ra = ra[perm]
@@ -39,11 +40,12 @@ psa = (sin_α=sin.(α_map), cos_α=cos.(α_map), sin_δ=sin.(δ_map), cos_δ=cos
 print("Precomputing the model profile grid.\n")
 
 # set up a profile to paint
-p = XGPaint.BattagliaProfile(Omega_c=0.2589, Omega_b=0.0486, h=0.6774)
+p = XGPaint.BattagliaProfile(Omega_c=0.24, Omega_b=0.046, h=0.7) # Buzzard cosmology
 
 # beam stuff (not used in this particular script)
 N_logθ = 512
 rft = RadialFourierTransform(n=N_logθ, pad=256)
+
 
 model_file::String = "cached_battaglia.jld2"
 if isfile(model_file)
@@ -66,19 +68,19 @@ sitp = scale(itp, prof_logθs, prof_redshift, prof_logMs);
 
 ##
 function paint_map!(m, p::XGPaint.AbstractProfile, psa, sitp, masses, 
-                    redshifts, αs, δs, irange)
+                    redshifts, αs, δs, irange; mult=4)
     for i in irange
         α₀ = αs[i]
         δ₀ = δs[i]
         mh = masses[i]
         z = redshifts[i]
-        θmax = XGPaint.θmax(p, mh * XGPaint.M_sun, z)
+        θmax = XGPaint.θmax(p, mh * XGPaint.M_sun, z, mult=mult)
         profile_paint!(m, α₀, δ₀, psa, sitp, z, mh, θmax)
     end
 end
 
 function chunked_paint!(m, p::XGPaint.AbstractProfile, psa, sitp, masses, 
-                        redshifts, αs, δs)
+                        redshifts, αs, δs; mult=4)
     m .= 0.0
     
     N_sources = length(masses)
@@ -88,13 +90,13 @@ function chunked_paint!(m, p::XGPaint.AbstractProfile, psa, sitp, masses,
     Threads.@threads for i in 1:Threads.nthreads()
         chunk_i = 2i
         i1, i2 = chunks[chunk_i]
-        paint_map!(m, p, psa, sitp, masses, redshifts, αs, δs, i1:i2)
+        paint_map!(m, p, psa, sitp, masses, redshifts, αs, δs, i1:i2, mult=mult)
     end
 
     Threads.@threads for i in 1:Threads.nthreads()
         chunk_i = 2i - 1
         i1, i2 = chunks[chunk_i]
-        paint_map!(m, p, psa, sitp, masses, redshifts, αs, δs, i1:i2)
+        paint_map!(m, p, psa, sitp, masses, redshifts, αs, δs, i1:i2, mult=mult)
     end
 end
 
@@ -103,12 +105,12 @@ end
 m = Enmap(zeros(shape), wcs)
 
 print("Painting map.\n")
-@time chunked_paint!(m, p, psa, sitp, halo_mass, redshift, ra, dec)
+@time chunked_paint!(m, p, psa, sitp, halo_mass, redshift, ra, dec, mult=cutoff)
 
 
 #
 write_map(
-    "/mnt/raid-cita/mlokken/buzzard/ymaps/ymap_buzzard_standard_bbps_car.fits",
+    "/mnt/raid-cita/mlokken/buzzard/ymaps/ymap_buzzard_standard_bbps_car_zgtrpt03.fits",
     m)
 
 #
